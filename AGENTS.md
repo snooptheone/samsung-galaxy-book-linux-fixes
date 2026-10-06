@@ -82,29 +82,75 @@ D-Bus do **`power-profiles-daemon`** (`net.hadess.PowerProfiles`,
 dispara quando o daemon está ligado ao `platform_profile`
 (`powerprofilesctl list` mostra `PlatformDriver: platform_profile`).
 
-Outros módulos do repo FPRINTD: **`fingerprint-fix` (EM USO)** e `kdeosd-fix`
-(removido, ver acima). Sem sinal de `fanspeed-fix` nem de `webcam-toggle`.
+Outros módulos do repo FPRINTD: `fingerprint-fix` (**substituído** por
+`fingerprint-fix-960xgl/`, ver abaixo) e `kdeosd-fix` (removido, ver acima). Sem
+sinal de `fanspeed-fix` nem de `webcam-toggle`.
 
-### `fingerprint-fix` — em uso, necessário para o sensor
+### Leitor de digital — **resolvido em 2026-10-06 com `fingerprint-fix-960xgl/`**
 
-> **Correção (2026-10-05, 23:10):** uma versão anterior deste arquivo dizia que
-> o `libfprint.sha256` estava **ausente**, que o monitor "não faz nada" e que o
-> `fprintd` usava o libfprint do CachyOS. **Estava errado.** O arquivo existe.
+Sensor EgisTec `1c7a:05a1` (driver `egismoc`, firmware `9050.1.2.33`).
 
-- Sensor `1c7a:05a1` (EgisTec SDCP, Book4). O instalador compila o ramo
-  `feature/sdcp-v2` do libfprint e o instala em `/usr` **por cima do pacote**.
-- Verificado: `/var/lib/samsung-galaxybook/libfprint.sha256` existe (18/08 21:39)
-  e é **idêntico** ao hash de `/usr/lib/libfprint-2.so.2` (mesma data); o marcador
-  `/etc/samsung-galaxybook-libfprint-sdcp-v2.installed` é da mesma hora.
-  `pacman -Qkk libfprint`: **15 de 71 arquivos alterados** (pacote 1.94.100-1.1).
-- `samsung-galaxybook-fprint-monitor.service` roda a cada boot, confere o hash e,
-  como não mudou, sai sem fazer nada. Ele **avisaria** se um `pacman -S libfprint`
-  sobrescrevesse a biblioteca. Não está parado: só não tem o que fazer.
-- `fprintd-list` mostra o sensor funcionando ("Egis Technology (LighTuning)
-  Match-on-Chip", dedo `right-index-finger`) e o `sudo` pede a digital.
-- `/var/lib/samsung-galaxybook/` **não pode ser removido**: guarda o
-  `libfprint.sha256`.
-- Para o repo, é um módulo **realmente necessário** neste notebook, não uma sobra.
+**Estado atual (verificado):** `libfprint` SDCP (commit `2d7c5277`) em
+`/usr/local/lib`, instalado por `fingerprint-fix-960xgl/install.sh`; um drop-in
+`/etc/systemd/system/fprintd.service.d/libfprint-sdcp.conf` aponta só o `fprintd`
+para ela (`LD_LIBRARY_PATH=/usr/local/lib`). O pacote `libfprint` (1.94.100-1.1)
+está **intacto** (`pacman -Qkk`: 71 arquivos, 0 alterados). Cadastro
+`fprintd-enroll -f right-index-finger` completou, `fprintd-verify` deu
+**`verify-match`** e o `sudo` voltou a aceitar a digital pelo PAM.
+
+**Por que o `libfprint` oficial não serve (medido, não suposição):**
+
+- O pacote oficial **reconhece** o sensor: o PID `05a1` está na tabela dele
+  (procurado nos bytes da `.so`; o `05a5`, do Book5, só existe no ramo SDCP) e
+  as tags `v1.94.9`, `v1.94.10` e `v1.94.100` já o listam.
+- Ele **abre** e lista o leitor (driver `egismoc`, 10 etapas de cadastro).
+- Mas o cadastro "completa" e o **chip fica com 0 digitais**: medido com um script
+  Python (`list_prints_sync`) depois de **três** cadastros, um deles sem nenhum
+  `verify` no meio. Então `fprintd-verify` dá `verify-no-match` (`Print was not
+  found on the devices storage`) e o `fprintd` apaga o registro local órfão.
+- No log de depuração do cadastro, o driver oficial manda três comandos ao chip
+  depois do 10º toque e declara `Enrollment was successful!` **sem conferir as
+  respostas**. O ramo `sdcp-v2` troca esse passo (`egismoc_enroll_commit`, nonce,
+  `application_secret`). **[hipótese]** o firmware deste leitor exige o cadastro
+  SDCP e rejeita o comando antigo. O MR
+  [!547](https://gitlab.freedesktop.org/libfprint/libfprint/-/merge_requests/547)
+  (SDCP v2) estava **aberto** em 2026-09-12; o !544 foi fechado.
+
+**O crash do `fprintd` (`g_object_set: assertion 'G_IS_OBJECT (object)' failed`,
+`SIGSEGV`) tinha outra causa:** um arquivo de digital **do lado do computador**,
+`/var/lib/fprint/raito/egismoc/016C15PRF919/7` (87 bytes), gravado pela
+biblioteca SDCP. O `fprintd` o lê em `file_storage_discover_prints()` e a
+`libfprint` oficial não o desserializa. Provado pelo log de depuração do `fprintd`
+(a queda vem logo depois dessa linha). **Não era** o chip, **nem** a idade da base
+do `libfprint` contra o `fprintd 1.94.5`: ambas as hipóteses estavam erradas e
+foram descartadas. Conserto: **mover** o arquivo (não apagar) para
+`/var/lib/fprint/raito/7.sdcp-old`.
+
+**Como o `fprintd` trata falha de verificação:** depois de um `verify`/`identify`
+sem acerto ele lista as digitais do chip e **apaga localmente** as que o chip não
+tem (`Deleted stored finger N ... as it is unknown to device`).
+
+**O que foi feito nesta máquina, em ordem (para não repetir):**
+
+1. O `fingerprint-fix` do FPRINTD (libfprint compilado **por cima de `/usr`**, hash
+   guardado em `/var/lib/samsung-galaxybook/libfprint.sha256`, monitor de boot) era
+   o que fazia a digital funcionar desde 18/08. O monitor só age se o hash da `.so`
+   **mudar**, então nunca descobriria que o pacote já bastava; **e o pacote não
+   bastava** (acima).
+2. Tentativa de migrar para o pacote oficial (`sudo pacman -S libfprint`, remover
+   monitor e marcadores, **sem** o `rm -rf` do instalador deles): o `fprintd`
+   passou a cair e o cadastro oficial não gravava. A digital ficou fora do ar por
+   cerca de uma hora (o `sudo` aceitou a senha o tempo todo; o PAM tem
+   `default=ignore`).
+3. Para recadastrar foi preciso **limpar o chip** (`clear_storage_sync`, só 1
+   digital lá, com trava) e mover o arquivo `7` antigo.
+4. Voltou-se à biblioteca SDCP, agora pelo módulo novo deste repo.
+
+> **Erros meus que ficaram nesta história (a maioria já corrigida):** afirmei que o
+> `fingerprint-fix` era "desnecessário" porque o PID existe no oficial (ele é
+> necessário: o reconhecimento existe, a **gravação** não); afirmei que o
+> `libfprint.sha256` estava ausente (existia); atribuí a primeira queda do
+> `fprintd` ao chip e depois à idade da base (era o arquivo local).
 
 ## Mapa das teclas (verificado com `evtest` + `journalctl -k`)
 
@@ -352,12 +398,70 @@ serve a qualquer máquina com `power-profiles-daemon`.
   `power-profiles-daemon` reiniciar (o `gdbus monitor` pode não seguir o novo dono
   do nome).
 
+## `fingerprint-fix-960xgl/` — libfprint SDCP sem tocar no pacote
+
+Diretório do repo (`custom`): `install.sh`, `uninstall.sh`, `check-upstream.sh`,
+`tests/test-guard.sh`, `README.md` (inglês). Substitui o `fingerprint-fix` do
+FPRINTD, **só para este modelo**.
+
+- **Trava dupla:** DMI `product_name` = `960XGL` **e** USB `1c7a:05a1` presente.
+  `--check-only` só confere isso (não precisa de root). O `05a5` do Book5 fica de
+  fora de propósito: o usuário não tem como testá-lo. Só Arch/CachyOS (`pacman`).
+- **Commit fixado** `2d7c5277de08c6b29b3fac7447f17a516fbc4d1c` (cabeça do ramo
+  `feature/sdcp-v2` quando foi escrito), buscado com `git fetch --depth 1` e
+  conferido com `rev-parse`. `--commit SHA` troca.
+- **Instala em `/usr/local`** (`--libdir=lib`, `-Dintrospection=false`), com
+  `-Dudev_rules=disabled -Dudev_hwdb=disabled`: o `meson` usa o `udevdir` **absoluto**
+  do pkg-config (`/usr/lib/udev`), não o prefixo, e escreveria por cima de arquivos
+  de udev do pacote.
+- **Drop-in do systemd só para o `fprintd`**, em vez de `ld.so.conf.d`. Medido: com
+  `/usr/local/lib` já no `ld.so.conf.d` (existe um `libcamera-local.conf`), `ldd
+  /usr/local/bin/cam` resolve o `libcamera` para `/usr/lib/`, ou seja, **a cópia
+  de `/usr/local` perde** para a de `/usr/lib` quando o soname é o mesmo.
+- **Confere o resultado:** sobe o `fprintd`, lê `/proc/<pid>/maps` para ver qual
+  `libfprint` ele carregou e exige símbolos `sdcp` (`nm -D`); se falhar, remove o
+  drop-in e para.
+- **Nunca apaga** nada de `/var/lib/fprint` nem do chip (o instalador antigo fazia
+  `rm -rf /var/lib/fprint/*` para contornar o crash descrito acima). Imprime a
+  receita de **mover** o arquivo antigo.
+- `--system` instala em `/usr` (como o FPRINTD fazia); o `uninstall.sh` então roda
+  `pacman -S libfprint`. O `uninstall.sh` do modo local remove o drop-in, a `.so`,
+  o `.pc`, os headers e o `metainfo.xml` (que o primeiro `meson install` espalhou
+  em `/usr/local/share/metainfo`; corrigido depois do primeiro teste real).
+- **`check-upstream.sh`** (manual): conta símbolos `sdcp` na `libfprint` do pacote.
+  Hoje dá `NO` (0 símbolos). Quando o MR !547 entrar e o pacote o trouxer, dá
+  `YES`: aí `uninstall.sh`, recadastrar e testar.
+- **PAM fora do módulo.** Aqui `pam_fprintd` já está em `system-auth`
+  (`[success=2 default=ignore]`), `system-local-login` (`sufficient`) e
+  `kde-fingerprint` (`required`); em `plasmalogin` está **comentado**. Não se sabe
+  quem o configurou. PAM errado pode trancar o login: não mexer sem conferir.
+- Sem monitor de boot (o antigo, de hash, nunca detectaria suporte nativo).
+
+**Verificado (2026-10-06):** `install.sh` de ponta a ponta, com `OK: fprintd loads
+/usr/local/lib/libfprint-2.so.2.0.0 (SDCP-capable)`; pacote intacto (0 de 71
+arquivos alterados); `fprintd-enroll` completo; `fprintd-verify` `verify-match`;
+`sudo` aceita a digital; `tests/test-guard.sh` 4/4, com contraprova (sem a checagem
+do modelo, o caso "outro modelo" falha); `shellcheck` limpo; os nomes das opções do
+`meson` e o comportamento do udev lidos no commit fixado.
+
+**Não verificado ainda:** se persiste **depois de reiniciar**; o que acontece
+quando o pacote `libfprint` for **atualizado** (com o desenho atual a nossa cópia
+não deveria ser afetada, mas não foi testado); o `uninstall.sh` (só o `shellcheck`
+passou).
+
+**Sobras da investigação (nada apagado; decisão do usuário):**
+`/var/lib/fprint.bak` (backup completo da pasta de digitais, do root),
+`/var/lib/fprint/raito/7.sdcp-old` (o arquivo que derrubava o `fprintd`) e os logs
+de depuração `/tmp/fprintd-*debug*` (IDs do leitor e do firmware, sem modelo
+biométrico). O pacote `evtest` e o `acpid` também foram instalados nesta sessão.
+
 ## Repositórios envolvidos
 
 - `samsung-galaxy-book-linux-fixes` (este): upstream do Andycodeman, `main` em
   `a20fe91`. Tem speaker-fix, mic-fix, webcam (libcamera/book5/legacy),
   camera-relay, ov02c10-26mhz-fix, nixos. **Não tem** driver `samsung-galaxybook`,
-  fingerprint nem teclas Fn.
+  fingerprint nem teclas Fn. O `custom` do usuário acrescenta `fnkeys-fix-960xgl/`,
+  `power-profile-osd/` e `fingerprint-fix-960xgl/`.
 - `samsung-galaxy-book-linux-fixes-FPRINTD` (`~/Documents/git/`): fork de
   David Bartlett, branch `galaxybook5-fixes`, baseado em `79f9d64` (23/03).
   Tudo que é novo está em `lib/` (`fnkeys-fix`, `fingerprint-fix`,
@@ -418,6 +522,30 @@ serve a qualquer máquina com `power-profiles-daemon`.
     que o habilitou.
 11. O `0x41` pode chegar em rajada (3 eventos em 17 ms). Qualquer ação nova ligada
     ao Fn+Esc precisa tolerar isso; a variante A já tem a trava.
+12. **Digital de outra biblioteca derruba o `fprintd`.** Um arquivo em
+    `/var/lib/fprint/<user>/egismoc/<id>/<dedo>` gravado por uma `libfprint`
+    derruba o `fprintd` quando outra a lê (`SIGSEGV` logo após
+    `file_storage_discover_prints()`). **Mova** o arquivo, não apague. Para ver:
+    rode o `fprintd` na mão com `G_MESSAGES_DEBUG=all` e leia a linha anterior à
+    queda.
+13. **Rodar o `fprintd` manual:** o `sudo` já acorda o `fprintd` do systemd (o PAM
+    tenta a digital antes da senha) e ele **segura o nome no D-Bus**
+    (`Failed to get name`). Pare o serviço **dentro do mesmo `sudo`**:
+    `sudo bash -c 'systemctl stop fprintd; exec env G_MESSAGES_DEBUG=all
+    /usr/lib/fprintd -t'`. E rode o `fprintd-enroll` **no terminal do usuário**:
+    via `runuser` a partir do root o polkit nega (`Not Authorized:
+    net.reactivated.fprint.device.enroll`), porque não é uma sessão local ativa.
+14. **`/tmp` e root:** o root não consegue sobrescrever em `/tmp` um arquivo de
+    outro usuário (`fs.protected_regular`, `Permission denied`). Use um nome novo
+    (`mktemp`) em vez de reaproveitar o log criado pelo `tee` do usuário.
+15. Um `fprintd` em falha **não tranca o login**: o PAM tem `default=ignore` e o
+    `sudo` cai na senha. Dá para investigar com calma.
+16. Um script que filtra a saída com `grep` num pipe **esconde** um `input()` sem
+    quebra de linha: o pedido de confirmação só aparece depois que o usuário digita.
+    Foi o que aconteceu no script de limpar o chip (que ficou parecendo travado).
+17. Uma `.so` em `/usr/local/lib` **não ganha** da de `/usr/lib` pelo
+    `ld.so.cache` (medido); use `LD_LIBRARY_PATH` num drop-in do serviço. O
+    `/proc/<pid>/maps` do `fprintd` só é legível pelo root.
 
 ## Como reproduzir o mapeamento
 
@@ -496,7 +624,7 @@ reaproveitado em qualquer módulo novo.
 | FPRINTD | Equivalente no padrão deste repo |
 |---|---|
 | `lib/fnkeys-fix` (baixa o `.c` do kernel e aplica patch Python em tempo de instalação) | diretório com `dkms.conf`, `Makefile`, `.c` **já patchado e versionado**, `install.sh`, `uninstall.sh`, `check-upstream`, `README.md` |
-| `lib/fingerprint-fix` | só instalador (compila libfprint), sem DKMS |
+| `lib/fingerprint-fix` | só instalador (compila libfprint), sem DKMS. **Feito:** `fingerprint-fix-960xgl/` (em `/usr/local` + drop-in, sem `rm -rf`) |
 | `lib/fanspeed-fix`, `kdeosd-fix`, `webcam-toggle` | scripts de usuário, sem DKMS |
 | GUI e `lib/` compartilhado | **não existe equivalente** neste repo |
 
@@ -531,8 +659,14 @@ kernel.
      o driver carrega sozinho no boot e o Fn+Esc funciona depois do reboot.
   5. Opcional: mandar o `case 0x41` ao kernel (opção C) e acompanhar a rajada
      do `0x41`.
-  6. Decidir o que fazer com o **`fingerprint-fix`** (em uso e necessário para o
-     sensor): levar para este repo no padrão dele, ou manter só no FPRINTD.
+  6. ~~Decidir o `fingerprint-fix`~~ **feito**: virou `fingerprint-fix-960xgl/`
+     (seção acima), instalado e testado em 2026-10-06 (`verify-match`, `sudo` ok).
+     Falta confirmar **depois de reiniciar** e **depois de atualizar o pacote
+     `libfprint`**.
+  7. Decidir o que fazer com as **sobras** da investigação (`/var/lib/fprint.bak`,
+     `/var/lib/fprint/raito/7.sdcp-old`, `/tmp/fprintd-*debug*`).
+  8. Acompanhar o MR !547 (SDCP v2): quando o pacote trouxer SDCP,
+     `fingerprint-fix-960xgl/check-upstream.sh` passa a dizer `YES`.
 
 ## Fora de escopo / outro problema
 
