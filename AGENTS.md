@@ -46,9 +46,14 @@ itens do fork apagados (serviço `fkeys-monitor`, os 2 scripts em
 `/usr/local/bin`, `/etc/modules-load.d/samsung-galaxybook.conf`,
 `fkeys-kernel.ver`, `/usr/src/...` e a árvore do DKMS); o `.ko` original
 restaurado em `kernel/` nos dois kernels; `modinfo -n` aponta para ele; os outros
-módulos DKMS ficaram intactos. **Não verificado ainda:** o carregamento automático
-no boot sem o `modules-load.d` (deve vir do ACPI `SAM0430`) e o Fn+Esc depois da
-remoção. A descrição abaixo é **histórica**:
+módulos DKMS ficaram intactos. **Verificado depois de reiniciar** (22:46–22:47):
+o driver do kernel (`srcversion` `201A05`, vindo de `kernel/drivers/platform/x86/`)
+**carrega sozinho no boot** sem o `modules-load.d` (pelo ACPI `SAM0430`); só o
+input "Camera Lens Cover" existe; kernel e `ppd` em `balanced`; `acpid`,
+`kde-power-osd` e `power-profiles-daemon` ativos; nenhum módulo
+`samsung-galaxybook` no DKMS; e o **Fn+Esc segue funcionando** (1 evento `0x41`,
+1 execução da ação, sem rajada). Limite: o Fn+Esc pós-reboot foi **uma apertada
+só**. A descrição abaixo é **histórica**:
 
 - Era um **fork do driver do kernel**, gerado pelo `lib/fnkeys-fix/install.sh` do
   repo `samsung-galaxy-book-linux-fixes-FPRINTD` (branch `galaxybook5-fixes`,
@@ -261,7 +266,8 @@ strings do original são subconjunto das dela.
   comando. `acpid` ativo e habilitado; ele carrega 2 regras (a outra é a
   `anything`, padrão do pacote). O script do sistema é idêntico ao do repo (`cmp`).
 - **Ponta a ponta (A):** uma apertada do Fn+Esc → 1 evento → 1 execução
-  (22:25:11, 22:25:22 e 22:26:11 segurando a tecla).
+  (22:25:11, 22:25:22 e 22:26:11 segurando a tecla). Repetido **depois de
+  remover o fork e reiniciar** (22:47:31): 1 evento, 1 execução.
 - **Testes:** `test-rule-match.sh` (5/5) e `test-debounce.sh` (falha no script
   antigo com 3 chamadas, passa no novo com 1). `shellcheck` limpo nos scripts.
 - **A variante B compilou** num `make LLVM=1` na pasta de rascunho, mas **nunca
@@ -458,9 +464,8 @@ kernel.
      `block_recording` `0` → `1`). Já não há diferença medida a favor do fork.
   2. **Variante B**: carregar e testar (hoje só compilou).
   3. Decidir se o **`kdeosd-fix`** entra no repo, e se junto com o Fn+Esc.
-  4. ~~Desinstalar o fork `book5pro`~~ **feito** (2026-10-05). Sobra verificar
-     o **Fn+Esc** depois da remoção e o **carregamento do driver no boot** sem o
-     `modules-load.d` (só reiniciando).
+  4. ~~Desinstalar o fork `book5pro`~~ **feito e verificado** (2026-10-05):
+     o driver carrega sozinho no boot e o Fn+Esc funciona depois do reboot.
   5. Opcional: mandar o `case 0x41` ao kernel (opção C) e acompanhar a rajada
      do `0x41`.
 
