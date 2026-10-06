@@ -25,20 +25,32 @@ trabalho. Itens marcados **[hipótese]** não foram confirmados.
 | Plataforma | Meteor Lake (Core Ultra), IPU6, ALC298 + 4x MAX98390 |
 | Dispositivo ACPI das teclas | `SAM0430:00` (`\_SB.SCAI`) |
 | Secure Boot | **ligado** (`SecureBoot` = 1 em efivars). `mokutil` **não instalado**. Módulos DKMS carregam, assinados por `DKMS module signing key` (`/var/lib/dkms/mok.{key,pub}`, DKMS 3.4.3) |
-| Driver oficial | `CONFIG_SAMSUNG_GALAXYBOOK=m`. O `.ko` original **não fica em `kernel/`**: o DKMS o guarda em `/var/lib/dkms/samsung-galaxybook-book5pro/original_module/<kver>/x86_64/samsung-galaxybook.ko.zst` |
-| Parecido com Book5, **não igual**: o fork do driver foi escrito para o Book5 Pro |
+| Driver oficial | `CONFIG_SAMSUNG_GALAXYBOOK=m`. **É o driver em uso desde 2026-10-05** (fork removido). O `.ko` está em `kernel/drivers/platform/x86/` nos kernels `7.2.9` e `6.18.55-lts` (o DKMS o devolveu ao remover o fork). Antes, ficava arquivado em `/var/lib/dkms/samsung-galaxybook-book5pro/original_module/` |
+| Parecido com Book5, **não igual**: o fork do driver (já removido) foi escrito para o Book5 Pro |
 
 O DSDT do repo `joshuagrisham/samsung-galaxybook-extras` **não serve**: o
 firmware foi atualizado depois daquele dump.
 
 ## O que está instalado (relevante)
 
-DKMS (`dkms status`): `samsung-galaxybook-book5pro/1.0`, `max98390-hda/1.0`,
-`ov02c10/1.0`, `ipu-bridge-fix/1.4`, `vboxhost`.
+DKMS (`dkms status`): `max98390-hda/1.0`, `ov02c10/1.0`, `ipu-bridge-fix/1.4`,
+`vboxhost`. **Nenhum módulo `samsung-galaxybook`**: o driver em uso é o do kernel.
 
-### Driver `samsung-galaxybook-book5pro` (o importante)
+### Driver `samsung-galaxybook-book5pro` — **REMOVIDO em 2026-10-05**
 
-- É um **fork do driver do kernel**, gerado pelo `lib/fnkeys-fix/install.sh` do
+Desinstalado a pedido do usuário com `sudo ./install.sh --remove-fork` (de
+`fnkeys-fix-960xgl/`), depois de medir que F4, F9, Fn+F10 e Fn+F11 funcionam igual
+com o driver do kernel. Foi a **primeira execução real** do `--remove-fork` e
+saiu sem erro. Verificado depois, sem `mokutil`: `dkms status` sem o fork; os 7
+itens do fork apagados (serviço `fkeys-monitor`, os 2 scripts em
+`/usr/local/bin`, `/etc/modules-load.d/samsung-galaxybook.conf`,
+`fkeys-kernel.ver`, `/usr/src/...` e a árvore do DKMS); o `.ko` original
+restaurado em `kernel/` nos dois kernels; `modinfo -n` aponta para ele; os outros
+módulos DKMS ficaram intactos. **Não verificado ainda:** o carregamento automático
+no boot sem o `modules-load.d` (deve vir do ACPI `SAM0430`) e o Fn+Esc depois da
+remoção. A descrição abaixo é **histórica**:
+
+- Era um **fork do driver do kernel**, gerado pelo `lib/fnkeys-fix/install.sh` do
   repo `samsung-galaxy-book-linux-fixes-FPRINTD` (branch `galaxybook5-fixes`,
   commit `05008e5` de David Bartlett, 26/03). O script baixa
   `samsung-galaxybook.c` do kernel stable e aplica um patch em Python.
@@ -69,6 +81,10 @@ do CachyOS 1.94.100, sensor `1c7a:05a1`), `kdeosd-fix` (instalado, marcador de
 22/04). Sem sinal de `fanspeed-fix` nem de `webcam-toggle`.
 
 ## Mapa das teclas (verificado com `evtest` + `journalctl -k`)
+
+> Medido **com o fork instalado**; a coluna "Como chega" cita caminhos do fork
+> (input "Hotkeys", filtro i8042). O fork foi removido e a seção "Driver original
+> vs. fork" mostra que as teclas funcionam igual com o driver do kernel.
 
 | Tecla | Função | Como chega | Status |
 |---|---|---|---|
@@ -146,11 +162,12 @@ Inputs com o original: só `Samsung Galaxy Book Camera Lens Cover`; o
   (Não estão no diretório do dispositivo.)
 - `platform_profile` (`/sys/firmware/acpi/platform_profile`): `quiet balanced performance`.
 - Bateria `BAT1`: `charge_control_end_threshold` existe (limite de carga em uso).
-- Inputs: `Samsung Galaxy Book Camera Lens Cover` (`SW_CAMERA_LENS_COVER`) e
-  `Samsung Galaxy Book Hotkeys` (`KEY_PROG1/CAMERA/SWITCHVIDEOMODE/MICMUTE`).
+- Inputs com o driver do kernel (em uso): só `Samsung Galaxy Book Camera Lens
+  Cover` (`SW_CAMERA_LENS_COVER`). `Samsung Galaxy Book Hotkeys` era do fork
+  (removido) e **não existe mais**.
   Os números `eventN` **mudam após recarregar o módulo**; confirme em
-  `/proc/bus/input/devices`. Quando investigado: lens cover = `event7`,
-  Hotkeys = `event8`, teclado = `event2`.
+  `/proc/bus/input/devices`. Quando o fork estava instalado: lens cover =
+  `event7`, Hotkeys = `event8`, teclado = `event2`.
 
 ## Como os eventos de tecla chegam (DSDT decompilado)
 
@@ -239,8 +256,9 @@ strings do original são subconjunto das dela.
 
 ### Estado na máquina e o que foi verificado
 
-- **Variante A instalada** (2026-10-05, 22:19). O fork `book5pro` **continua
-  instalado**. `acpid` ativo e habilitado; ele carrega 2 regras (a outra é a
+- **Variante A instalada** (2026-10-05, 22:19). O fork `book5pro` foi
+  **removido depois** (ver acima); a variante A foi reinstalada junto, no mesmo
+  comando. `acpid` ativo e habilitado; ele carrega 2 regras (a outra é a
   `anything`, padrão do pacote). O script do sistema é idêntico ao do repo (`cmp`).
 - **Ponta a ponta (A):** uma apertada do Fn+Esc → 1 evento → 1 execução
   (22:25:11, 22:25:22 e 22:26:11 segurando a tecla).
@@ -285,9 +303,9 @@ veio depois do bug).
 
 ## Armadilhas já encontradas
 
-1. **Trocar o módulo carrega o driver errado.** Compilei o driver do kernel puro
-   e o carreguei com `rmmod` + `insmod`: isso **removeu o input Hotkeys** e a
-   tecla Settings/F4/Copilot do fork. Para voltar:
+1. **[histórico, o fork já foi removido]** Trocar o módulo carregava o driver
+   errado. Compilei o driver do kernel puro e o carreguei com `rmmod` + `insmod`:
+   isso **removeu o input Hotkeys** e a tecla Settings/F4/Copilot do fork. Para voltar:
    `sudo rmmod samsung_galaxybook && sudo modprobe samsung_galaxybook`
    (ou reiniciar). O `modprobe` pega a versão de `updates/dkms/`. Trocar várias
    vezes seguidas **pode** desligar o `power-profiles-daemon` do
@@ -440,8 +458,9 @@ kernel.
      `block_recording` `0` → `1`). Já não há diferença medida a favor do fork.
   2. **Variante B**: carregar e testar (hoje só compilou).
   3. Decidir se o **`kdeosd-fix`** entra no repo, e se junto com o Fn+Esc.
-  4. **Desinstalar o fork `book5pro`** do sistema (nada medido depende dele).
-     Decisão do usuário; a variante B o exige (`--remove-fork`).
+  4. ~~Desinstalar o fork `book5pro`~~ **feito** (2026-10-05). Sobra verificar
+     o **Fn+Esc** depois da remoção e o **carregamento do driver no boot** sem o
+     `modules-load.d` (só reiniciando).
   5. Opcional: mandar o `case 0x41` ao kernel (opção C) e acompanhar a rajada
      do `0x41`.
 
