@@ -69,9 +69,12 @@ só**. A descrição abaixo é **histórica**:
 - Serviço `samsung-galaxybook-fkeys-monitor.service` detecta quando o kernel
   absorve o patch (grava `/var/lib/samsung-galaxybook/fkeys-kernel.ver`).
 
-### `kdeosd-fix` (em uso)
+### `kdeosd-fix` — **REMOVIDO em 2026-10-05**, substituído por `power-profile-osd/`
 
-`lib/kdeosd-fix` do repo FPRINTD está instalado: `kde-power-osd.service`
+Era o `lib/kdeosd-fix` do repo FPRINTD (descrição histórica abaixo). O usuário
+removeu o serviço de sistema com os 4 comandos que o `install.sh` do
+`power-profile-osd` imprime; confirmado: unidade desconhecida, script e marcador
+apagados, nenhum processo sobrando. Era: `kde-power-osd.service`
 (sistema, root, habilitado) roda `/usr/local/sbin/kde-power-osd.sh`, **idêntico**
 ao heredoc do `install.sh` (65 linhas; marcador de 22/04). O script escuta o
 D-Bus do **`power-profiles-daemon`** (`net.hadess.PowerProfiles`,
@@ -79,11 +82,29 @@ D-Bus do **`power-profiles-daemon`** (`net.hadess.PowerProfiles`,
 dispara quando o daemon está ligado ao `platform_profile`
 (`powerprofilesctl list` mostra `PlatformDriver: platform_profile`).
 
-Outros módulos do repo FPRINTD: `fingerprint-fix` (marcador de 18/08 em
-`/etc/samsung-galaxybook-libfprint-sdcp-v2.installed`; `libfprint.sha256`
-**ausente**, então o monitor não faz nada; o `fprintd` funciona com o libfprint
-do CachyOS 1.94.100, sensor `1c7a:05a1`), `kdeosd-fix` (instalado, marcador de
-22/04). Sem sinal de `fanspeed-fix` nem de `webcam-toggle`.
+Outros módulos do repo FPRINTD: **`fingerprint-fix` (EM USO)** e `kdeosd-fix`
+(removido, ver acima). Sem sinal de `fanspeed-fix` nem de `webcam-toggle`.
+
+### `fingerprint-fix` — em uso, necessário para o sensor
+
+> **Correção (2026-10-05, 23:10):** uma versão anterior deste arquivo dizia que
+> o `libfprint.sha256` estava **ausente**, que o monitor "não faz nada" e que o
+> `fprintd` usava o libfprint do CachyOS. **Estava errado.** O arquivo existe.
+
+- Sensor `1c7a:05a1` (EgisTec SDCP, Book4). O instalador compila o ramo
+  `feature/sdcp-v2` do libfprint e o instala em `/usr` **por cima do pacote**.
+- Verificado: `/var/lib/samsung-galaxybook/libfprint.sha256` existe (18/08 21:39)
+  e é **idêntico** ao hash de `/usr/lib/libfprint-2.so.2` (mesma data); o marcador
+  `/etc/samsung-galaxybook-libfprint-sdcp-v2.installed` é da mesma hora.
+  `pacman -Qkk libfprint`: **15 de 71 arquivos alterados** (pacote 1.94.100-1.1).
+- `samsung-galaxybook-fprint-monitor.service` roda a cada boot, confere o hash e,
+  como não mudou, sai sem fazer nada. Ele **avisaria** se um `pacman -S libfprint`
+  sobrescrevesse a biblioteca. Não está parado: só não tem o que fazer.
+- `fprintd-list` mostra o sensor funcionando ("Egis Technology (LighTuning)
+  Match-on-Chip", dedo `right-index-finger`) e o `sudo` pede a digital.
+- `/var/lib/samsung-galaxybook/` **não pode ser removido**: guarda o
+  `libfprint.sha256`.
+- Para o repo, é um módulo **realmente necessário** neste notebook, não uma sobra.
 
 ## Mapa das teclas (verificado com `evtest` + `journalctl -k`)
 
@@ -291,6 +312,46 @@ Nome `fnkeys-fix-960xgl`; variante padrão A; ação padrão = só registrar no 
 `--remove-fork` só explícito; teste = `test-rule-match.sh` (o `test-debounce.sh`
 veio depois do bug).
 
+## `power-profile-osd/` — aviso de troca de perfil, como serviço de usuário
+
+Substituto do `kde-power-osd` (serviço de **sistema**, como root). Diretório do
+repo: `power-profile-osd.sh`, `power-profile-osd.service`, `install.sh`,
+`uninstall.sh`, `tests/test-osd.sh`, `README.md` (inglês). **Nada é Samsung**:
+serve a qualquer máquina com `power-profiles-daemon`.
+
+- **Roda como o usuário** (`systemd --user`), sem root, sem `sudo`, sem `loginctl`.
+  `install.sh` e `uninstall.sh` **recusam** rodar como root: instalam em
+  `~/.local/bin/power-profile-osd` e `~/.config/systemd/user/`.
+- Fluxo: `gdbus monitor --system --dest net.hadess.PowerProfiles` → `grep
+  ActiveProfile` → lê o perfil com `busctl` → mostra o aviso via
+  `qdbus-qt6`/`qdbus6`/`qdbus` (`org.kde.plasmashell /org/kde/osdService
+  showText`), com **fallback para `notify-send`**. Textos e ícones são os do
+  antigo (`Performance Mode`, `Power Saver Mode`, `Balanced Mode`; perfil
+  desconhecido mostra o nome cru). A unidade sobe depois de
+  `graphical-session.target` e `plasma-plasmashell.service` e é reiniciada se o
+  monitor terminar (o script sai com 1 ao fim do pipeline).
+- **Defeitos do antigo corrigidos:** o `exit 0` quando o `plasmashell` ainda não
+  estava pronto (o serviço morria e não voltava), o `env XDG_CURRENT_DESKTOP`
+  inválido (código morto), o `After=graphical-session.target` sem efeito num
+  serviço de sistema, o `start` que não reaplicava script novo e o root
+  desnecessário.
+- **Verificado:** `shellcheck` limpo; `tests/test-osd.sh` passa 8/8 com
+  `gdbus`/`busctl`/`qdbus`/`notify-send` falsos (mapa dos perfis, pipeline,
+  fallback, saída não zero quando o monitor termina); contraprova: sem o `exit 1`
+  o teste falha no caso certo. **Instalado nesta máquina às 23:06:49**, ativo,
+  0 reinícios; Fn+F11 duas vezes → o aviso apareceu (o usuário confirmou), com o
+  antigo já parado.
+- **Descoberta do teste com protótipo:** o `showText` do KDE mostra **um aviso por
+  vez**; com o antigo e o novo ativos, o segundo substitui o primeiro. Foi por
+  isso que, no primeiro teste, o usuário só viu o aviso antigo.
+- Um usuário comum **consegue** escutar os sinais do daemon (`gdbus monitor
+  --system`), o que dispensou o root. Um sinal por apertada do Fn+F11 (4
+  amostras).
+- **Não verificado ainda:** subir sozinho no login pela unidade real (só no
+  próximo boot), reiniciar depois de uma queda, e o que acontece se o próprio
+  `power-profiles-daemon` reiniciar (o `gdbus monitor` pode não seguir o novo dono
+  do nome).
+
 ## Repositórios envolvidos
 
 - `samsung-galaxy-book-linux-fixes` (este): upstream do Andycodeman, `main` em
@@ -462,12 +523,16 @@ kernel.
 - **Pendências abertas:**
   1. ~~Medir o Fn+F10 no driver original~~ **feito** (2026-10-05 22:33,
      `block_recording` `0` → `1`). Já não há diferença medida a favor do fork.
-  2. **Variante B**: carregar e testar (hoje só compilou).
-  3. Decidir se o **`kdeosd-fix`** entra no repo, e se junto com o Fn+Esc.
+  2. **Variante B**: carregar e testar (hoje só compilou). Fica por **último**,
+     a pedido do usuário.
+  3. ~~Decidir o `kdeosd-fix`~~ **feito**: virou `power-profile-osd/`, instalado e
+     testado (falta só confirmar no próximo boot e com o daemon reiniciando).
   4. ~~Desinstalar o fork `book5pro`~~ **feito e verificado** (2026-10-05):
      o driver carrega sozinho no boot e o Fn+Esc funciona depois do reboot.
   5. Opcional: mandar o `case 0x41` ao kernel (opção C) e acompanhar a rajada
      do `0x41`.
+  6. Decidir o que fazer com o **`fingerprint-fix`** (em uso e necessário para o
+     sensor): levar para este repo no padrão dele, ou manter só no FPRINTD.
 
 ## Fora de escopo / outro problema
 
