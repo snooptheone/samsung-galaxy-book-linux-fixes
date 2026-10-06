@@ -161,7 +161,7 @@ Inputs com o original: só `Samsung Galaxy Book Camera Lens Cover`; o
 
 | Código | O que se sabe |
 |---|---|
-| `0x41` | **Fn+Esc**, confirmado. Sem função no Linux. **Chega ao userspace**: com o `acpid` rodando, `acpi_listen` mostra `samsung-galaxybook SAM0430:00 00000041 00000001` (o driver chama `acpi_bus_generate_netlink_event()` para todo evento, depois do `switch`). |
+| `0x41` | **Fn+Esc**, confirmado. Sem função no Linux. **Chega ao userspace**: com o `acpid` rodando, `acpi_listen` mostra `samsung-galaxybook SAM0430:00 00000041 00000001` (o driver chama `acpi_bus_generate_netlink_event()` para todo evento, depois do `switch`). **Pode vir em rajada:** uma apertada gerou 3 eventos em 17 ms (22:19:54); nas apertadas seguintes, 1 evento cada. Gatilho desconhecido (ver `fnkeys-fix-960xgl`). |
 | `0x42` | 4 ocorrências, todas em 2026-10-04 (21:27:55, 21:28:26, 22:38:34, 22:40:50), 1–4 s após `PM: suspend exit`. **Não é a tampa** (suspend por tampa às 20:33 não gerou). **Não é plugar/desplugar carregador.** Dois dos acordares trazem `typec port0-partner: PM: parent port0 should not be sleeping`. Causa desconhecida. |
 | `0x73` | 146 ocorrências, intervalo de **92–93 s**, de 2026-10-04 19:36 a 2026-10-05 18:00, depois **parou**. **Não está ligado à fonte de energia:** 300 s na bateria sem nenhum. **Reapareceu uma vez** às 21:23:36, 3 s depois de um Fn+Esc e com o `acpid` rodando. Causa desconhecida; **[hipótese]** processo/periférico que parou ou estado do EC. |
 
@@ -170,20 +170,94 @@ Ambos são só avisos de log. Nenhum afeta algo que o usuário tenha notado.
 Descrição do Google (0x42 = tampa/tela, 0x73 = fonte de energia) **foi testada e
 refutada** pelos logs acima; não cite como fato.
 
-## Pendência (única tecla sem função): Fn+Esc
+## Fn+Esc (única tecla sem função): opções e estado
 
-Nada aplicado. Opções, da menos arriscada para a mais:
+Opções avaliadas, da menos arriscada para a mais. **A e B estão implementadas**
+em `fnkeys-fix-960xgl/` (próxima seção); C e D não.
 
-| # | Opção | Risco | Observação |
+| # | Opção | Risco | Estado |
 |---|---|---|---|
-| A | **Userspace**: regra do `acpid` para `SAM0430:00 00000041` | nenhum (sem kernel, sem DKMS, sem Secure Boot) | **verificado que o evento chega**. A ação roda como root; para agir na sessão do usuário o script precisa entrar nela. `acpid` está instalado (pacman), **parado e desabilitado**; `acpi_listen` exige `sudo systemctl start acpid`. |
-| B | DKMS com `.c` patchado + `BUILD_EXCLUSIVE_KERNEL` (DKMS 3.4.3 suporta) | baixo: fora da série testada o DKMS pula o build e o driver do kernel segue | segue o padrão do repo |
-| C | Mandar `case 0x41` para o kernel (lista `platform-driver-x86`) | zero depois de aceito | prazo longo |
-| D | Fork inteiro com patch Python no instalador (como o FPRINTD faz) | médio: quebra quando o driver do kernel muda | não recomendado |
+| A | **Userspace**: regra do `acpid` para `SAM0430:00 00000041` | nenhum (sem kernel, sem DKMS, sem Secure Boot) | **implementada, instalada e testada** nesta máquina |
+| B | DKMS com `.c` patchado + `BUILD_EXCLUSIVE_KERNEL` | baixo: fora da série `7.2.x` o DKMS pula o build e o driver do kernel segue | **implementada, só compilada** (nunca carregada) |
+| C | Mandar `case 0x41` para o kernel (lista `platform-driver-x86`) | zero depois de aceito | não feita; prazo longo |
+| D | Fork inteiro com patch Python no instalador (como o FPRINTD faz) | médio: quebra quando o driver do kernel muda | não recomendada |
 
-Recomendação registrada: **A**, já que o fork não é necessário para as outras
-teclas (ver tabela acima). Se for B/D, a tecla para o Fn+Esc é **`KEY_PROG2`**
-(`KEY_PROG1` é a Settings `0x7c` do fork).
+A tecla para o Fn+Esc na variante B é **`KEY_PROG2`** (`KEY_PROG1` é a Settings
+`0x7c` do fork). O `acpid` só precisa estar rodando para a A; o instalador cuida disso.
+
+## `fnkeys-fix-960xgl/` — o que foi construído
+
+Diretório do repo (commits `a07f0e9` e `59954e4` no `custom`) com **duas
+variantes** para o Fn+Esc, escolhidas no instalador. Só roda no NP960XGL (guarda
+por DMI: `product_name` = `960XGL`).
+
+```
+fnkeys-fix-960xgl/
+├── README.md  install.sh  uninstall.sh      # README em inglês, como os outros do repo
+├── userspace/  gb-fnesc.rules  gb-fnesc.sh  fnesc.conf     # variante A
+├── dkms/       dkms.conf  Makefile  samsung-galaxybook.c  firmware_attributes_class.h   # variante B
+└── tests/      test-rule-match.sh  test-debounce.sh
+```
+
+Uso: `sudo ./install.sh` (A, sem reboot) · `sudo ./install.sh --action 'cmd'` ·
+`sudo ./install.sh --dkms --remove-fork` (B, com reboot) · `sudo ./uninstall.sh`.
+
+- **Uma variante por vez.** Trocar remove a outra (`uninstall.sh --variant X
+  --keep-config`). Motivo: o driver encaminha o evento ao userspace mesmo quando
+  o trata, então com as duas ativas a ação rodaria em dobro.
+- Estado em `/var/lib/samsung-galaxybook-960xgl/state` (`STATE_VARIANT`,
+  `STATE_ACPID_BY_US`).
+- **`--remove-fork`** só existe como flag explícita. A variante B **recusa**
+  instalar se o `samsung-galaxybook-book5pro` existir (mesmo nome de módulo).
+  Sem a flag, o fork nunca é tocado.
+
+**Variante A (userspace).** Regra `/etc/acpi/events/samsung-galaxybook-fnesc`
+(`event=^samsung-galaxybook SAM0430:00 00000041 `) chama
+`/usr/local/sbin/samsung-galaxybook-fnesc.sh`, que executa `FNESC_COMMAND` (de
+`/etc/samsung-galaxybook-960xgl/fnesc.conf`, **padrão vazio = só uma linha no
+journal**, etiqueta `samsung-galaxybook-fnesc`) como o usuário do `seat0`, via
+`runuser` com `XDG_RUNTIME_DIR` e `DBUS_SESSION_BUS_ADDRESS`. `WAYLAND_DISPLAY`
+**não** é definido: app gráfico precisa de um serviço de usuário. O instalador
+habilita o `acpid` (`STATE_ACPID_BY_US=1`) e o desinstalador o desabilita.
+
+**Variante B (DKMS).** `samsung-galaxybook-960xgl/1.0`,
+`BUILD_EXCLUSIVE_KERNEL="^7\.2\."` (o kernel `6.18.x-lts` instalado **não**
+compila). O `.c` é o do kernel **v7.2.9** mais 14 linhas: define do `0x41`,
+`KEY_PROG2` no input existente e um `case`. Reiniciar depois de instalar ou
+desinstalar. Sem tratamento de Secure Boot (decisão do usuário; o DKMS assina).
+A base **não é provada idêntica** ao módulo carregado: o `srcversion` difere
+(`1FD9…` contra `201A…`), mas todos os símbolos do original existem na base e as
+strings do original são subconjunto das dela.
+
+### Estado na máquina e o que foi verificado
+
+- **Variante A instalada** (2026-10-05, 22:19). O fork `book5pro` **continua
+  instalado**. `acpid` ativo e habilitado; ele carrega 2 regras (a outra é a
+  `anything`, padrão do pacote). O script do sistema é idêntico ao do repo (`cmp`).
+- **Ponta a ponta (A):** uma apertada do Fn+Esc → 1 evento → 1 execução
+  (22:25:11, 22:25:22 e 22:26:11 segurando a tecla).
+- **Testes:** `test-rule-match.sh` (5/5) e `test-debounce.sh` (falha no script
+  antigo com 3 chamadas, passa no novo com 1). `shellcheck` limpo nos scripts.
+- **A variante B compilou** num `make LLVM=1` na pasta de rascunho, mas **nunca
+  foi carregada** nem instalada.
+
+### Bug achado e corrigido: rajada de eventos
+
+Às 22:19:54, **uma** apertada gerou **3 eventos `0x41` em 17 ms** (+0, +16 ms,
++1 ms) e o script, ainda sem trava, rodou 3 vezes. Não reproduziu depois: três
+apertadas seguintes deram 1 evento cada, e segurar a tecla por 1–2 s também. Antes
+do reboot o `0x41` já aparecia em duplas e trincas. **Gatilho desconhecido.**
+Correção em `gb-fnesc.sh`: a primeira instância pega um `flock` e o segura por
+0,5 s; as outras saem. Efeito colateral: uma segunda apertada **deliberada** em
+menos de 0,5 s é ignorada. `FNESC_CONF` e `FNESC_LOCK` existem só para o teste
+trocar os caminhos. A trava **não foi vista em ação numa rajada real**; a lógica
+está provada só pelo teste sintético.
+
+### Decisões do usuário para este módulo
+
+Nome `fnkeys-fix-960xgl`; variante padrão A; ação padrão = só registrar no log;
+`--remove-fork` só explícito; teste = `test-rule-match.sh` (o `test-debounce.sh`
+veio depois do bug).
 
 ## Repositórios envolvidos
 
@@ -216,9 +290,11 @@ teclas (ver tabela acima). Se for B/D, a tecla para o Fn+Esc é **`KEY_PROG2`**
    (`zstd -dc ... > /tmp/x.ko`). O caminho `kernel/drivers/platform/x86/` **não
    existe** (o DKMS o move). Um `insmod` de arquivo vazio falha **depois** do
    `rmmod`, deixando o sistema sem driver: valide com `test -s` antes.
-2. Patchear o driver do **kernel** não resolve; o alvo certo é o fonte do fork
-   (acima). Build avulso precisa de `make LLVM=1` e de
-   `firmware_attributes_class.h` (está na pasta do fork).
+2. Carregar à mão um `.ko` do driver do kernel **substitui o fork** e some o
+   input Hotkeys (ver 1). Já a variante B de `fnkeys-fix-960xgl` instala via
+   DKMS um `.c` do kernel com só o `0x41` e exige tirar o fork (`--remove-fork`).
+   Build avulso precisa de `make LLVM=1` e de `firmware_attributes_class.h`
+   (a variante B já leva o header).
 3. `sudo pacman -S linux-cachyos-headers` (mesmo "reinstalando") **remove e
    reinstala todos os módulos DKMS** do kernel atual.
 4. `evtest` não vem instalado (`sudo pacman -S evtest`). Gravar o `event2`
@@ -239,6 +315,16 @@ teclas (ver tabela acima). Se for B/D, a tecla para o Fn+Esc é **`KEY_PROG2`**
    acpid`); sem ele falha com `can't open socket /var/run/acpid.socket`.
 8. Os headers do CachyOS não são `linux-headers`; o nome vem de
    `/usr/lib/modules/$(uname -r)/pkgbase` + `-headers`.
+9. Para ver o que a ação do Fn+Esc fez: `journalctl -t samsung-galaxybook-fnesc
+   --no-pager -n 5`. A etiqueta é **`samsung-galaxybook-fnesc`**; qualquer
+   variação volta `No entries`. Sem `--no-pager` o `journalctl` abre o
+   paginador (sair com `q`).
+10. O instalador da variante A **muda o sistema**: habilita o `acpid` no boot e
+    grava em `/etc/acpi/events/`, `/usr/local/sbin/` e `/etc/samsung-galaxybook-960xgl/`.
+    O `uninstall.sh` desfaz tudo e só desabilita o `acpid` se foi o instalador
+    que o habilitou.
+11. O `0x41` pode chegar em rajada (3 eventos em 17 ms). Qualquer ação nova ligada
+    ao Fn+Esc precisa tolerar isso; a variante A já tem a trava.
 
 ## Como reproduzir o mapeamento
 
@@ -334,20 +420,21 @@ kernel.
   `git push --force-with-lease fork custom`.
 - O próximo trabalho será **só para o Galaxy Book4 Ultra (NP960XGL)**, o único
   modelo que o usuário consegue testar. Não é genérico Book4/Book5.
-- **Revisão (mesma noite):** a decisão abaixo foi tomada antes de descobrirmos
-  que o fork não é necessário para F4, F9 e Fn+F11, e que o `0x41` chega ao
-  userspace. A direção atual é a **opção A** (regra do `acpid`, sem módulo),
-  **ainda pendente de aprovação do usuário**. Pendências: (1) medir o **Fn+F10** (`block_recording`) no
-  **driver original** (no fork já foi medido); (2) decidir se o `kdeosd-fix` entra no repo (e se junto com a
-  regra do Fn+Esc); (3) só então desinstalar o fork.
-- Decisão anterior (vale só se o caminho for DKMS): seguir o padrão DKMS acima
-  (fonte `.c` versionado, não baixado no instalador) e tratar o Fn+Esc (`0x41`).
-  - **Manter** o que foi verificado funcionando no NP960XGL: a máquina de
-    estados do **F4** (Super+P do i8042 → `KEY_SWITCHVIDEOMODE`) e o input
-    Hotkeys; F9/F10/F11 já vêm do driver do kernel.
-  - **Não carregar sem teste no hardware** o que é só do Book5: os cases ACPI
-    `0x7c`, `0x6e`/`0x6f` (nunca dispararam aqui) e o tratamento da tecla
-    Copilot por i8042 (aqui ela chega como Meta+Shift+F23 e já funciona).
+- **O usuário aceitou implementar as duas variantes (A e B) e escolher no
+  instalador.** Isso virou `fnkeys-fix-960xgl/` (seção acima). Nenhum módulo
+  carrega o fork, o Copilot nem os cases ACPI do Book5.
+- **Decisão superada:** uma proposta anterior de módulo DKMS que **mantinha** a
+  máquina de estados do F4 e o input "Hotkeys" do fork. Foi descartada: o F4
+  funciona com o driver original (o firmware manda `video/switchmode`), e o
+  `.c` da variante B só acrescenta o `0x41`.
+- **Pendências abertas:**
+  1. Medir o **Fn+F10** (`block_recording`) no **driver original** (no fork já
+     foi medido). Exige reiniciar com o original carregado.
+  2. **Variante B**: carregar e testar (hoje só compilou).
+  3. Decidir se o **`kdeosd-fix`** entra no repo, e se junto com o Fn+Esc.
+  4. Só depois de 1 e 3, **desinstalar o fork `book5pro`** do sistema.
+  5. Opcional: mandar o `case 0x41` ao kernel (opção C) e acompanhar a rajada
+     do `0x41`.
 
 ## Fora de escopo / outro problema
 
