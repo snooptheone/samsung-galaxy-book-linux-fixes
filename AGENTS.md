@@ -177,6 +177,93 @@ sudo pkill evtest; rm -f /tmp/keys.log
 Para decompilar o DSDT: `sudo cp /sys/firmware/acpi/tables/DSDT /tmp/d.dat`
 (usuário), depois `iasl -d` (já instalado). Apague ao terminar.
 
+## Estrutura do projeto e padrão DKMS (análise de 2026-10-05, só leitura)
+
+Este repo é o upstream `Andycodeman/samsung-galaxy-book-linux-fixes` (tag
+`v0.3.75`). O branch `custom` é a base do fork do usuário.
+
+### Layout
+
+- **Um diretório por correção**, independente das outras. Cada um tem
+  `README.md`, `install.sh` e `uninstall.sh`: `speaker-fix`,
+  `speaker-fix-940xfg`, `mic-fix`, `ov02c10-26mhz-fix`, `webcam-fix-libcamera`,
+  `webcam-fix-book5`, `webcam-fix` (legado), `camera-relay`, mais `nixos/` e `docs/`.
+- **Sem CI** (não há `.github/`), sem build central, sem `VERSION`; versão por
+  **tags** (`v0.3.x`). README raiz lista as correções, hardware testado e como
+  reportar problema.
+- `docs/triage/` guarda notas de issues e PRs (`issue-NN-findings.md`,
+  `pr-NNN-review.md`). Faz parte do repo.
+- **Testes** só em `camera-relay/tests/` (scripts de shell). Os módulos DKMS não têm.
+- `nixos/` tem um `.nix` por correção, com opção `enable`, lendo arquivos dos
+  diretórios irmãos.
+- O `.gitignore` do upstream ignora `AGENTS.md` e `CLAUDE.md` (linhas geradas
+  por ferramenta). Este `AGENTS.md` foi commitado com `git add -f`.
+
+### Convenção dos módulos DKMS
+
+Exemplos: `speaker-fix` (2 módulos), `ov02c10-26mhz-fix` (1),
+`webcam-fix-book5/ipu-bridge-fix` (1).
+
+| Elemento | Convenção |
+|---|---|
+| `dkms.conf` | `PACKAGE_NAME`, `PACKAGE_VERSION`, `BUILT_MODULE_NAME[n]`, `DEST_MODULE_LOCATION="/updates"` (ou `/updates/dkms`), `AUTOINSTALL="yes"`, `MAKE[0]`/`CLEAN` com `${kernel_source_dir}` |
+| `Makefile` | `obj-m += x.o`; no `speaker-fix` fica em `src/` com `KVER ?=` e `KDIR ?=` |
+| Fonte | copiado para `/usr/src/<nome>-<versão>/` |
+| Instalação | `dkms add` → `build` → `install`; remove a versão anterior antes (`dkms remove --all`) |
+| Secure Boot | `mokutil --sb-state`; configura `mok_signing_key`/`mok_certificate` no DKMS; confere se o módulo está **assinado** e se a chave está **inscrita**; orienta o MOK enroll |
+
+Os `dkms.conf` do projeto **não usam `LLVM=1`**, mas o kernel do usuário é
+clang e `ipu-bridge-fix`/`ov02c10` já constam como instalados no `dkms status`,
+então o DKMS resolve isso. Mesmo assim, **teste o build do módulo novo** no
+sistema antes de assumir.
+
+### Convenção dos `install.sh`
+
+`#!/bin/bash`, `set -e`, exige root (`id -u`), detecta `dnf`/`pacman`/`apt`,
+instala `dkms` e headers; variáveis no topo (`DKMS_NAME`, `DKMS_VER`,
+`SRC_DIR`); `echo` simples. **Os instaladores não compartilham código** (cada um
+repete detecção de distro e assinatura de módulo). O `uninstall.sh` espelha o
+`install.sh`: para serviços, `rmmod`, `dkms remove`, apaga
+`/etc/systemd/system`, `/etc/modules-load.d`, `/usr/local/sbin`, `/usr/src`.
+
+### Auto-remoção quando o kernel absorve o patch
+
+`speaker-fix` instala `*-check-upstream.service` (oneshot no boot) que verifica
+se o kernel tem suporte nativo e, se tiver, **remove o DKMS, os serviços e os
+arquivos sozinho**. É o mesmo conceito do `fkeys-monitor` do FPRINTD e deve ser
+reaproveitado em qualquer módulo novo.
+
+### Comparação com o repo FPRINTD
+
+| FPRINTD | Equivalente no padrão deste repo |
+|---|---|
+| `lib/fnkeys-fix` (baixa o `.c` do kernel e aplica patch Python em tempo de instalação) | diretório com `dkms.conf`, `Makefile`, `.c` **já patchado e versionado**, `install.sh`, `uninstall.sh`, `check-upstream`, `README.md` |
+| `lib/fingerprint-fix` | só instalador (compila libfprint), sem DKMS |
+| `lib/fanspeed-fix`, `kdeosd-fix`, `webcam-toggle` | scripts de usuário, sem DKMS |
+| GUI e `lib/` compartilhado | **não existe equivalente** neste repo |
+
+Trade-off: versionar o `.c` é mais estável (o patch Python do FPRINTD quebra
+quando o driver do kernel muda), mas passa a ser trabalho nosso acompanhar o
+kernel.
+
+## Decisões do usuário (2026-10-05)
+
+- Fork público criado: `snooptheone/samsung-galaxy-book-linux-fixes`; branch
+  **`custom`** é o padrão do fork. O `main` do fork e o local ficam espelhando o
+  upstream e **não devem receber commits próprios**.
+- Atualizar o `custom`: `git fetch origin && git rebase origin/main` e
+  `git push --force-with-lease fork custom`.
+- O próximo módulo será **só para o Galaxy Book4 Ultra (NP960XGL)**, o único
+  modelo que o usuário consegue testar. Não é um módulo genérico Book4/Book5.
+  Ele deve seguir o padrão DKMS acima (fonte `.c` versionado, não baixado no
+  instalador) e tratar o Fn+Esc (`0x41`).
+  - **Manter** o que foi verificado funcionando no NP960XGL: a máquina de
+    estados do **F4** (Super+P do i8042 → `KEY_SWITCHVIDEOMODE`) e o input
+    Hotkeys; F9/F10/F11 já vêm do driver do kernel.
+  - **Não carregar sem teste no hardware** o que é só do Book5: os cases ACPI
+    `0x7c`, `0x6e`/`0x6f` (nunca dispararam aqui) e o tratamento da tecla
+    Copilot por i8042 (aqui ela chega como Meta+Shift+F23 e já funciona).
+
 ## Fora de escopo / outro problema
 
 - `pop-os/pop#3980`: mesmo modelo e mesma BIOS, mas o problema é a **bateria que
