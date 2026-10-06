@@ -79,7 +79,7 @@ do CachyOS 1.94.100, sensor `1c7a:05a1`), `kdeosd-fix` (instalado, marcador de
 | F5 | Touchpad | scan `0x76`, `KEY_TOUCHPAD_TOGGLE` (+Ctrl+Meta) | ok |
 | F6 / F7 / F8 | Mudo, vol −, vol + | scancodes comuns | ok |
 | F9 | Backlight do teclado | scancode consumido pelo filtro i8042 (silencioso no evtest) | ok (testado também no driver original) |
-| Fn+F10 | Bloqueio da câmera (**com Fn**, como o Fn+F11) | scancode consumido pelo filtro i8042 → `block_recording` | **fork: medido, funciona** (`block_recording` `0` → `1` após um Fn+F10, 2026-10-05 21:55). **Driver original: não medido** |
+| Fn+F10 | Bloqueio da câmera (**com Fn**, como o Fn+F11) | scancode consumido pelo filtro i8042 → `block_recording` | **medido nos dois, funciona**: `block_recording` `0` → `1` após um Fn+F10 (fork 21:55, driver original 22:33, 2026-10-05) |
 | Fn+F11 | Perfil de energia | ACPI `0x70` → `platform_profile_cycle()`. **Só com Fn**: F11 sem Fn não faz nada, nem no fork nem no original (medido) | ok (fork e original) |
 | F12 | Fn Lock | scan `0xa8`, `KEY_UNKNOWN`; o firmware faz a troca | funciona; evento solto |
 | Copilot | — | Meta+Shift+F23 em ev2, sem ACPI | ok, sem driver |
@@ -99,18 +99,19 @@ Carregado o `.ko` original com `rmmod` + `insmod` (confirmado pelo
 |---|---|---|
 | F4 (trocar tela) | **funciona** | funciona |
 | F9 (backlight) | **funciona** | funciona |
-| Fn+F10 (câmera) | **não medido** | **funciona** (`block_recording` `0` → `1`) |
+| Fn+F10 (câmera) | **funciona** (`block_recording` `0` → `1`) | **funciona** (`block_recording` `0` → `1`) |
 | F11 sem Fn | não troca o perfil (`performance` → `performance`) | não troca (`balanced` → `balanced`) |
 | Fn+F11 | troca (`performance` → `quiet`) | troca |
 | Fn+Esc | sem efeito (`0x41` no log) | sem efeito |
 
-Conclusão: **para F4, F9 e Fn+F11 o fork não faz diferença neste modelo.** O
-"F11 não mudou nada" inicial era só a tecla errada (faltava o Fn). Único furo
-da comparação: **Fn+F10** (a tecla é com Fn, não F10 sozinho), medido só no
-fork e **não** no driver original (exige reiniciar com o original carregado).
-Medição: ler
+Conclusão: **para F4, F9, Fn+F10 e Fn+F11 o fork não faz diferença neste
+modelo; não há mais nenhuma diferença medida a favor dele.** O "F11 não mudou
+nada" inicial era só a tecla errada (faltava o Fn). A câmera é **Fn+F10**, não
+F10 sozinho. O Fn+F10 foi medido **uma vez em cada driver**, lendo
 `/sys/class/firmware-attributes/samsung-galaxybook/attributes/block_recording/current_value`
-antes e depois de apertar Fn+F10. Se o F9 também exige Fn, não foi verificado.
+antes e depois; **não** se olhou a imagem da câmera. O fork só acrescenta o
+input "Hotkeys", e nada que o usuário usa depende dele. Se o F9 também exige
+Fn, não foi verificado.
 
 Inputs com o original: só `Samsung Galaxy Book Camera Lens Cover`; o
 `Samsung Galaxy Book Hotkeys` é do fork.
@@ -123,11 +124,18 @@ Inputs com o original: só `Samsung Galaxy Book Camera Lens Cover`; o
   o `platform_profile` do kernel mudava (`quiet`) e o `ppd` ficava em
   `balanced`. Depois de **reiniciar**, voltou, com kernel e `ppd` iguais e
   `PlatformDriver: platform_profile`.
-- **[hipótese]** descarregar o módulo faz o `ppd` perder o driver de plataforma
-  e ele não o reencontra quando o módulo volta. Não vi o `PlatformDriver`
-  durante a fase quebrada, então não está confirmado.
-- Regra prática: **depois de trocar de driver, reinicie** em vez de
-  `rmmod`/`modprobe`.
+- **[hipótese, enfraquecida]** descarregar o módulo faz o `ppd` perder o driver
+  de plataforma e ele não o reencontra quando o módulo volta. Não vi o
+  `PlatformDriver` durante a fase quebrada. **Contraevidência (22:33):** uma
+  troca fork → original com `rmmod` + `insmod`, **sem reiniciar**, deixou o
+  `ppd` ligado (`PlatformDriver: platform_profile`, kernel e `ppd` em
+  `balanced`) e o aviso do KDE funcionando (**o usuário testou o aviso** com o
+  original carregado, antes de afirmar que funcionava). A quebra anterior veio depois de
+  **várias** trocas seguidas (fork ↔ original, 3 vezes) e pode ter outra causa.
+- Regra prática: **uma troca isolada não precisa de reinício**; depois de
+  várias trocas seguidas, se o aviso do F11 parar (kernel e `ppd` divergentes),
+  reiniciar resolve. Confirme com `powerprofilesctl get` contra
+  `/sys/firmware/acpi/platform_profile`.
 
 ## Interfaces expostas
 
@@ -281,10 +289,10 @@ veio depois do bug).
    e o carreguei com `rmmod` + `insmod`: isso **removeu o input Hotkeys** e a
    tecla Settings/F4/Copilot do fork. Para voltar:
    `sudo rmmod samsung_galaxybook && sudo modprobe samsung_galaxybook`
-   (ou reiniciar). O `modprobe` pega a versão de `updates/dkms/`. **Mas** o
-   `rmmod`/`modprobe` repetido pode desligar o `power-profiles-daemon` do
-   `platform_profile` e matar o aviso do F11 (só o reboot reconecta; ver acima).
-   Prefira reiniciar.
+   (ou reiniciar). O `modprobe` pega a versão de `updates/dkms/`. Trocar várias
+   vezes seguidas **pode** desligar o `power-profiles-daemon` do
+   `platform_profile` e matar o aviso do F11 (uma troca isolada não deu
+   problema; ver acima). Se acontecer, reiniciar reconecta.
    Para testar o driver **original**, o `.ko` está em
    `/var/lib/dkms/samsung-galaxybook-book5pro/original_module/$(uname -r)/x86_64/`
    (`zstd -dc ... > /tmp/x.ko`). O caminho `kernel/drivers/platform/x86/` **não
@@ -428,11 +436,12 @@ kernel.
   funciona com o driver original (o firmware manda `video/switchmode`), e o
   `.c` da variante B só acrescenta o `0x41`.
 - **Pendências abertas:**
-  1. Medir o **Fn+F10** (`block_recording`) no **driver original** (no fork já
-     foi medido). Exige reiniciar com o original carregado.
+  1. ~~Medir o Fn+F10 no driver original~~ **feito** (2026-10-05 22:33,
+     `block_recording` `0` → `1`). Já não há diferença medida a favor do fork.
   2. **Variante B**: carregar e testar (hoje só compilou).
   3. Decidir se o **`kdeosd-fix`** entra no repo, e se junto com o Fn+Esc.
-  4. Só depois de 1 e 3, **desinstalar o fork `book5pro`** do sistema.
+  4. **Desinstalar o fork `book5pro`** do sistema (nada medido depende dele).
+     Decisão do usuário; a variante B o exige (`--remove-fork`).
   5. Opcional: mandar o `case 0x41` ao kernel (opção C) e acompanhar a rajada
      do `0x41`.
 
