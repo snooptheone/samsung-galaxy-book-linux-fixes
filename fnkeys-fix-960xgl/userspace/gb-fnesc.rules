@@ -1,0 +1,6 @@
+# Fn+Esc (Samsung support key) on the Galaxy Book4 Ultra NP960XGL.
+# The samsung-galaxybook driver forwards every ACPI notify to userspace;
+# 0x41 is Fn+Esc. Verified with: acpi_listen
+#   samsung-galaxybook SAM0430:00 00000041 00000001
+event=^samsung-galaxybook SAM0430:00 00000041
+action=/usr/local/sbin/samsung-galaxybook-fnesc.sh
