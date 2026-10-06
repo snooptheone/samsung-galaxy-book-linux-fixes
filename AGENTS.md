@@ -79,7 +79,7 @@ do CachyOS 1.94.100, sensor `1c7a:05a1`), `kdeosd-fix` (instalado, marcador de
 | F5 | Touchpad | scan `0x76`, `KEY_TOUCHPAD_TOGGLE` (+Ctrl+Meta) | ok |
 | F6 / F7 / F8 | Mudo, vol −, vol + | scancodes comuns | ok |
 | F9 | Backlight do teclado | scancode consumido pelo filtro i8042 (silencioso no evtest) | ok (testado também no driver original) |
-| F10 | Bloqueio da câmera | scancode consumido pelo filtro i8042 → `block_recording` | ok com o fork; **não testado com o driver original** |
+| Fn+F10 | Bloqueio da câmera (**com Fn**, como o Fn+F11) | scancode consumido pelo filtro i8042 → `block_recording` | **fork: medido, funciona** (`block_recording` `0` → `1` após um Fn+F10, 2026-10-05 21:55). **Driver original: não medido** |
 | Fn+F11 | Perfil de energia | ACPI `0x70` → `platform_profile_cycle()`. **Só com Fn**: F11 sem Fn não faz nada, nem no fork nem no original (medido) | ok (fork e original) |
 | F12 | Fn Lock | scan `0xa8`, `KEY_UNKNOWN`; o firmware faz a troca | funciona; evento solto |
 | Copilot | — | Meta+Shift+F23 em ev2, sem ACPI | ok, sem driver |
@@ -99,14 +99,18 @@ Carregado o `.ko` original com `rmmod` + `insmod` (confirmado pelo
 |---|---|---|
 | F4 (trocar tela) | **funciona** | funciona |
 | F9 (backlight) | **funciona** | funciona |
-| F10 (câmera) | **não testado** (usuário assumiu que funciona) | funciona |
+| Fn+F10 (câmera) | **não medido** | **funciona** (`block_recording` `0` → `1`) |
 | F11 sem Fn | não troca o perfil (`performance` → `performance`) | não troca (`balanced` → `balanced`) |
 | Fn+F11 | troca (`performance` → `quiet`) | troca |
 | Fn+Esc | sem efeito (`0x41` no log) | sem efeito |
 
 Conclusão: **para F4, F9 e Fn+F11 o fork não faz diferença neste modelo.** O
 "F11 não mudou nada" inicial era só a tecla errada (faltava o Fn). Único furo
-da comparação: **F10 com o driver original**.
+da comparação: **Fn+F10** (a tecla é com Fn, não F10 sozinho), medido só no
+fork e **não** no driver original (exige reiniciar com o original carregado).
+Medição: ler
+`/sys/class/firmware-attributes/samsung-galaxybook/attributes/block_recording/current_value`
+antes e depois de apertar Fn+F10. Se o F9 também exige Fn, não foi verificado.
 
 Inputs com o original: só `Samsung Galaxy Book Camera Lens Cover`; o
 `Samsung Galaxy Book Hotkeys` é do fork.
@@ -333,8 +337,8 @@ kernel.
 - **Revisão (mesma noite):** a decisão abaixo foi tomada antes de descobrirmos
   que o fork não é necessário para F4, F9 e Fn+F11, e que o `0x41` chega ao
   userspace. A direção atual é a **opção A** (regra do `acpid`, sem módulo),
-  **ainda pendente de aprovação do usuário**. Pendências: (1) testar o F10 com o
-  driver original; (2) decidir se o `kdeosd-fix` entra no repo (e se junto com a
+  **ainda pendente de aprovação do usuário**. Pendências: (1) medir o **Fn+F10** (`block_recording`) no
+  **driver original** (no fork já foi medido); (2) decidir se o `kdeosd-fix` entra no repo (e se junto com a
   regra do Fn+Esc); (3) só então desinstalar o fork.
 - Decisão anterior (vale só se o caminho for DKMS): seguir o padrão DKMS acima
   (fonte `.c` versionado, não baixado no instalador) e tratar o Fn+Esc (`0x41`).
