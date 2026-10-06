@@ -1,0 +1,13 @@
+[Unit]
+Description=On-screen notification when the power profile changes
+After=graphical-session.target plasma-plasmashell.service
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/power-profile-osd
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target
