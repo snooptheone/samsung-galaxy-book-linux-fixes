@@ -24,6 +24,8 @@ trabalho. Itens marcados **[hipótese]** não foram confirmados.
 | SO / kernel | CachyOS, `7.2.9-1-cachyos` (compilado com **clang**; módulos externos exigem `make LLVM=1`) |
 | Plataforma | Meteor Lake (Core Ultra), IPU6, ALC298 + 4x MAX98390 |
 | Dispositivo ACPI das teclas | `SAM0430:00` (`\_SB.SCAI`) |
+| Secure Boot | **ligado** (`SecureBoot` = 1 em efivars). `mokutil` **não instalado**. Módulos DKMS carregam, assinados por `DKMS module signing key` (`/var/lib/dkms/mok.{key,pub}`, DKMS 3.4.3) |
+| Driver oficial | `CONFIG_SAMSUNG_GALAXYBOOK=m`. O `.ko` original **não fica em `kernel/`**: o DKMS o guarda em `/var/lib/dkms/samsung-galaxybook-book5pro/original_module/<kver>/x86_64/samsung-galaxybook.ko.zst` |
 | Parecido com Book5, **não igual**: o fork do driver foi escrito para o Book5 Pro |
 
 O DSDT do repo `joshuagrisham/samsung-galaxybook-extras` **não serve**: o
@@ -50,6 +52,16 @@ DKMS (`dkms status`): `samsung-galaxybook-book5pro/1.0`, `max98390-hda/1.0`,
 - Serviço `samsung-galaxybook-fkeys-monitor.service` detecta quando o kernel
   absorve o patch (grava `/var/lib/samsung-galaxybook/fkeys-kernel.ver`).
 
+### `kdeosd-fix` (em uso)
+
+`lib/kdeosd-fix` do repo FPRINTD está instalado: `kde-power-osd.service`
+(sistema, root, habilitado) roda `/usr/local/sbin/kde-power-osd.sh`, **idêntico**
+ao heredoc do `install.sh` (65 linhas; marcador de 22/04). O script escuta o
+D-Bus do **`power-profiles-daemon`** (`net.hadess.PowerProfiles`,
+`ActiveProfile`) e mostra o aviso do KDE. **Não olha o kernel nem o fork.** Só
+dispara quando o daemon está ligado ao `platform_profile`
+(`powerprofilesctl list` mostra `PlatformDriver: platform_profile`).
+
 Outros módulos do repo FPRINTD: `fingerprint-fix` (marcador de 18/08 em
 `/etc/samsung-galaxybook-libfprint-sdcp-v2.installed`; `libfprint.sha256`
 **ausente**, então o monitor não faz nada; o `fprintd` funciona com o libfprint
@@ -63,12 +75,12 @@ do CachyOS 1.94.100, sensor `1c7a:05a1`), `kdeosd-fix` (instalado, marcador de
 | Fn+Esc | Suporte Samsung (ícone de headset) | ACPI `0x41` | **sem handler** |
 | F1 | ? | `KEY_PROG1`, scan `0xce`, teclado comum (ev2) | ok (kernel) |
 | F2 / F3 | Brilho da tela | Video Bus | ok |
-| F4 | Troca de tela | scancodes Super+P → filtro i8042 do fork → `KEY_SWITCHVIDEOMODE` (ev8) | ok |
+| F4 | Troca de tela | scancodes Super+P → filtro i8042 do fork → `KEY_SWITCHVIDEOMODE` (ev8). **Também funciona com o driver original**: o firmware manda `video/switchmode VMOD 00000080` por ACPI video | ok, **sem precisar do fork** |
 | F5 | Touchpad | scan `0x76`, `KEY_TOUCHPAD_TOGGLE` (+Ctrl+Meta) | ok |
 | F6 / F7 / F8 | Mudo, vol −, vol + | scancodes comuns | ok |
-| F9 | Backlight do teclado | scancode consumido pelo filtro i8042 (silencioso no evtest) | ok |
-| F10 | Bloqueio da câmera | scancode consumido pelo filtro i8042 → `block_recording` | ok |
-| F11 | Perfil de energia | ACPI `0x70` → `platform_profile_cycle()` | ok |
+| F9 | Backlight do teclado | scancode consumido pelo filtro i8042 (silencioso no evtest) | ok (testado também no driver original) |
+| F10 | Bloqueio da câmera | scancode consumido pelo filtro i8042 → `block_recording` | ok com o fork; **não testado com o driver original** |
+| Fn+F11 | Perfil de energia | ACPI `0x70` → `platform_profile_cycle()`. **Só com Fn**: F11 sem Fn não faz nada, nem no fork nem no original (medido) | ok (fork e original) |
 | F12 | Fn Lock | scan `0xa8`, `KEY_UNKNOWN`; o firmware faz a troca | funciona; evento solto |
 | Copilot | — | Meta+Shift+F23 em ev2, sem ACPI | ok, sem driver |
 
@@ -77,6 +89,41 @@ engole o scancode. Isso não é falta de suporte.
 
 Os cases ACPI `0x6e` (mic) e `0x6f` (webcam) que o fork trata **nunca dispararam**
 neste modelo (código morto aqui, inofensivo).
+
+## Driver original do kernel vs. fork (testado à noite, 2026-10-05)
+
+Carregado o `.ko` original com `rmmod` + `insmod` (confirmado pelo
+`srcversion`: original `201A05CD7164D0CCD868817`, fork `0A1825414CF30ACB7673EA6`).
+
+| Tecla | Original | Fork |
+|---|---|---|
+| F4 (trocar tela) | **funciona** | funciona |
+| F9 (backlight) | **funciona** | funciona |
+| F10 (câmera) | **não testado** (usuário assumiu que funciona) | funciona |
+| F11 sem Fn | não troca o perfil (`performance` → `performance`) | não troca (`balanced` → `balanced`) |
+| Fn+F11 | troca (`performance` → `quiet`) | troca |
+| Fn+Esc | sem efeito (`0x41` no log) | sem efeito |
+
+Conclusão: **para F4, F9 e Fn+F11 o fork não faz diferença neste modelo.** O
+"F11 não mudou nada" inicial era só a tecla errada (faltava o Fn). Único furo
+da comparação: **F10 com o driver original**.
+
+Inputs com o original: só `Samsung Galaxy Book Camera Lens Cover`; o
+`Samsung Galaxy Book Hotkeys` é do fork.
+
+### Aviso do KDE no F11 e o `power-profiles-daemon`
+
+- O aviso vem do `kde-power-osd` (ver acima) e depende de o **daemon** estar
+  ligado ao `platform_profile`.
+- Depois de várias trocas de módulo com `rmmod`/`modprobe`, o aviso **parou**:
+  o `platform_profile` do kernel mudava (`quiet`) e o `ppd` ficava em
+  `balanced`. Depois de **reiniciar**, voltou, com kernel e `ppd` iguais e
+  `PlatformDriver: platform_profile`.
+- **[hipótese]** descarregar o módulo faz o `ppd` perder o driver de plataforma
+  e ele não o reencontra quando o módulo volta. Não vi o `PlatformDriver`
+  durante a fase quebrada, então não está confirmado.
+- Regra prática: **depois de trocar de driver, reinicie** em vez de
+  `rmmod`/`modprobe`.
 
 ## Interfaces expostas
 
@@ -110,9 +157,9 @@ neste modelo (código morto aqui, inofensivo).
 
 | Código | O que se sabe |
 |---|---|
-| `0x41` | **Fn+Esc**, confirmado. Sem função no Linux. |
+| `0x41` | **Fn+Esc**, confirmado. Sem função no Linux. **Chega ao userspace**: com o `acpid` rodando, `acpi_listen` mostra `samsung-galaxybook SAM0430:00 00000041 00000001` (o driver chama `acpi_bus_generate_netlink_event()` para todo evento, depois do `switch`). |
 | `0x42` | 4 ocorrências, todas em 2026-10-04 (21:27:55, 21:28:26, 22:38:34, 22:40:50), 1–4 s após `PM: suspend exit`. **Não é a tampa** (suspend por tampa às 20:33 não gerou). **Não é plugar/desplugar carregador.** Dois dos acordares trazem `typec port0-partner: PM: parent port0 should not be sleeping`. Causa desconhecida. |
-| `0x73` | 146 ocorrências, intervalo de **92–93 s**, de 2026-10-04 19:36 a 2026-10-05 18:00, depois **parou**. **Não está ligado à fonte de energia:** 300 s na bateria sem nenhum. Causa desconhecida; **[hipótese]** processo/periférico que parou ou estado do EC. |
+| `0x73` | 146 ocorrências, intervalo de **92–93 s**, de 2026-10-04 19:36 a 2026-10-05 18:00, depois **parou**. **Não está ligado à fonte de energia:** 300 s na bateria sem nenhum. **Reapareceu uma vez** às 21:23:36, 3 s depois de um Fn+Esc e com o `acpid` rodando. Causa desconhecida; **[hipótese]** processo/periférico que parou ou estado do EC. |
 
 Ambos são só avisos de log. Nenhum afeta algo que o usuário tenha notado.
 
@@ -121,11 +168,18 @@ refutada** pelos logs acima; não cite como fato.
 
 ## Pendência (única tecla sem função): Fn+Esc
 
-Proposta, **não aplicada**: no `lib/fnkeys-fix/install.sh` do repo FPRINTD, no
-bloco `new_notify` do patch Python, adicionar `case 0x41` emitindo uma tecla
-pelo `hotkey_input_dev`, e declarar a tecla com `set_bit`. Usar **`KEY_PROG2`**
-(`KEY_PROG1` já é a tecla Settings `0x7c`). Depois reinstalar o DKMS. Exige
-aprovação do usuário e a escolha da ação final (silenciar mic, abrir app etc.).
+Nada aplicado. Opções, da menos arriscada para a mais:
+
+| # | Opção | Risco | Observação |
+|---|---|---|---|
+| A | **Userspace**: regra do `acpid` para `SAM0430:00 00000041` | nenhum (sem kernel, sem DKMS, sem Secure Boot) | **verificado que o evento chega**. A ação roda como root; para agir na sessão do usuário o script precisa entrar nela. `acpid` está instalado (pacman), **parado e desabilitado**; `acpi_listen` exige `sudo systemctl start acpid`. |
+| B | DKMS com `.c` patchado + `BUILD_EXCLUSIVE_KERNEL` (DKMS 3.4.3 suporta) | baixo: fora da série testada o DKMS pula o build e o driver do kernel segue | segue o padrão do repo |
+| C | Mandar `case 0x41` para o kernel (lista `platform-driver-x86`) | zero depois de aceito | prazo longo |
+| D | Fork inteiro com patch Python no instalador (como o FPRINTD faz) | médio: quebra quando o driver do kernel muda | não recomendado |
+
+Recomendação registrada: **A**, já que o fork não é necessário para as outras
+teclas (ver tabela acima). Se for B/D, a tecla para o Fn+Esc é **`KEY_PROG2`**
+(`KEY_PROG1` é a Settings `0x7c` do fork).
 
 ## Repositórios envolvidos
 
@@ -149,7 +203,15 @@ aprovação do usuário e a escolha da ação final (silenciar mic, abrir app et
    e o carreguei com `rmmod` + `insmod`: isso **removeu o input Hotkeys** e a
    tecla Settings/F4/Copilot do fork. Para voltar:
    `sudo rmmod samsung_galaxybook && sudo modprobe samsung_galaxybook`
-   (ou reiniciar). O `modprobe` pega a versão de `updates/dkms/`.
+   (ou reiniciar). O `modprobe` pega a versão de `updates/dkms/`. **Mas** o
+   `rmmod`/`modprobe` repetido pode desligar o `power-profiles-daemon` do
+   `platform_profile` e matar o aviso do F11 (só o reboot reconecta; ver acima).
+   Prefira reiniciar.
+   Para testar o driver **original**, o `.ko` está em
+   `/var/lib/dkms/samsung-galaxybook-book5pro/original_module/$(uname -r)/x86_64/`
+   (`zstd -dc ... > /tmp/x.ko`). O caminho `kernel/drivers/platform/x86/` **não
+   existe** (o DKMS o move). Um `insmod` de arquivo vazio falha **depois** do
+   `rmmod`, deixando o sistema sem driver: valide com `test -s` antes.
 2. Patchear o driver do **kernel** não resolve; o alvo certo é o fonte do fork
    (acima). Build avulso precisa de `make LLVM=1` e de
    `firmware_attributes_class.h` (está na pasta do fork).
@@ -160,6 +222,19 @@ aprovação do usuário e a escolha da ação final (silenciar mic, abrir app et
    (`/tmp/*.log`) e mate os órfãos (`sudo pkill evtest`) ao terminar. O `Ctrl+C`
    num `bash -c '... & ... wait'` deixa os `evtest` rodando em segundo plano.
 5. `/tmp/dsdt-*.dat` copiado com `sudo` fica do root; só `sudo rm` apaga.
+6. **Secure Boot ligado e sem `mokutil`.** Os instaladores do upstream só
+   configuram assinatura nos ramos `dnf` e `apt`; no `pacman` as checagens
+   `mokutil --sb-state 2>/dev/null` **falham em silêncio**. O `fnkeys-fix` do
+   FPRINTD não trata Secure Boot. Tudo funciona no CachyOS porque o DKMS 3.x
+   assina sozinho com `/var/lib/dkms/mok.*` (chave já inscrita; confirmado por
+   `modinfo -F signer`). Sem `mokutil`, dá para ler o estado em
+   `/sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c`
+   (último byte 1 = ligado). **Decisão do usuário: deixar igual** (confiar na
+   assinatura do DKMS, sem tratamento extra), válida só se houver módulo.
+7. O `acpi_listen` exige o **serviço** `acpid` rodando (`sudo systemctl start
+   acpid`); sem ele falha com `can't open socket /var/run/acpid.socket`.
+8. Os headers do CachyOS não são `linux-headers`; o nome vem de
+   `/usr/lib/modules/$(uname -r)/pkgbase` + `-headers`.
 
 ## Como reproduzir o mapeamento
 
@@ -253,10 +328,16 @@ kernel.
   upstream e **não devem receber commits próprios**.
 - Atualizar o `custom`: `git fetch origin && git rebase origin/main` e
   `git push --force-with-lease fork custom`.
-- O próximo módulo será **só para o Galaxy Book4 Ultra (NP960XGL)**, o único
-  modelo que o usuário consegue testar. Não é um módulo genérico Book4/Book5.
-  Ele deve seguir o padrão DKMS acima (fonte `.c` versionado, não baixado no
-  instalador) e tratar o Fn+Esc (`0x41`).
+- O próximo trabalho será **só para o Galaxy Book4 Ultra (NP960XGL)**, o único
+  modelo que o usuário consegue testar. Não é genérico Book4/Book5.
+- **Revisão (mesma noite):** a decisão abaixo foi tomada antes de descobrirmos
+  que o fork não é necessário para F4, F9 e Fn+F11, e que o `0x41` chega ao
+  userspace. A direção atual é a **opção A** (regra do `acpid`, sem módulo),
+  **ainda pendente de aprovação do usuário**. Pendências: (1) testar o F10 com o
+  driver original; (2) decidir se o `kdeosd-fix` entra no repo (e se junto com a
+  regra do Fn+Esc); (3) só então desinstalar o fork.
+- Decisão anterior (vale só se o caminho for DKMS): seguir o padrão DKMS acima
+  (fonte `.c` versionado, não baixado no instalador) e tratar o Fn+Esc (`0x41`).
   - **Manter** o que foi verificado funcionando no NP960XGL: a máquina de
     estados do **F4** (Super+P do i8042 → `KEY_SWITCHVIDEOMODE`) e o input
     Hotkeys; F9/F10/F11 já vêm do driver do kernel.
