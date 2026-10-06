@@ -39,6 +39,7 @@ else
     systemctl daemon-reload
     rm -f "${STATE_PREFIX}"/lib/libfprint-2.so*
     rm -f "${STATE_PREFIX}/lib/pkgconfig/libfprint-2.pc"
+    rm -f "${STATE_PREFIX}/share/metainfo/org.freedesktop.libfprint.metainfo.xml"
     rm -rf "${STATE_PREFIX}/include/libfprint-2"
 fi
 
