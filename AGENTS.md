@@ -449,11 +449,15 @@ quando o pacote `libfprint` for **atualizado** (com o desenho atual a nossa cóp
 não deveria ser afetada, mas não foi testado); o `uninstall.sh` (só o `shellcheck`
 passou).
 
-**Sobras da investigação (nada apagado; decisão do usuário):**
-`/var/lib/fprint.bak` (backup completo da pasta de digitais, do root),
-`/var/lib/fprint/raito/7.sdcp-old` (o arquivo que derrubava o `fprintd`) e os logs
-de depuração `/tmp/fprintd-*debug*` (IDs do leitor e do firmware, sem modelo
-biométrico). O pacote `evtest` e o `acpid` também foram instalados nesta sessão.
+**Sobras da investigação: apagadas a pedido do usuário (2026-10-06).** Removidos:
+`/var/lib/fprint.bak` (backup completo da pasta de digitais, com `sudo rm -r`) e os
+4 logs `/tmp/fprintd-*debug*` (IDs do leitor e do firmware, sem modelo biométrico).
+O arquivo `/var/lib/fprint/raito/7.sdcp-old` (o que derrubava o `fprintd`, movido
+para lá) **já não existia** quando o `rm` rodou; **não se sabe por quê** (nunca se
+olhou o arquivo depois do `mv`). Depois da limpeza a digital seguiu funcionando
+(`fprintd-list`: `#0: right-index-finger`) e os core dumps do `fprintd` ficaram em
+9, os antigos. O pacote `evtest` e o `acpid` também foram instalados nesta sessão
+e continuam lá.
 
 ## Repositórios envolvidos
 
@@ -663,8 +667,8 @@ kernel.
      (seção acima), instalado e testado em 2026-10-06 (`verify-match`, `sudo` ok).
      Falta confirmar **depois de reiniciar** e **depois de atualizar o pacote
      `libfprint`**.
-  7. Decidir o que fazer com as **sobras** da investigação (`/var/lib/fprint.bak`,
-     `/var/lib/fprint/raito/7.sdcp-old`, `/tmp/fprintd-*debug*`).
+  7. ~~Sobras da investigação~~ **apagadas** (2026-10-06): `/var/lib/fprint.bak` e
+     os logs de depuração. O `7.sdcp-old` já tinha sumido por conta própria.
   8. Acompanhar o MR !547 (SDCP v2): quando o pacote trouxer SDCP,
      `fingerprint-fix-960xgl/check-upstream.sh` passa a dizer `YES`.
 
