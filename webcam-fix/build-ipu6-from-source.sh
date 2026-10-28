@@ -222,7 +222,6 @@ mkdir -p build && cd build
 export PKG_CONFIG_PATH="/usr/$LIBDIR/pkgconfig:${PKG_CONFIG_PATH:-}"
 
 cmake -DCMAKE_BUILD_TYPE=Release \
-      -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
       -DCMAKE_INSTALL_PREFIX=/usr \
       -DCMAKE_INSTALL_LIBDIR="/usr/$LIBDIR" \
       -DBUILD_CAMHAL_ADAPTOR=ON \
